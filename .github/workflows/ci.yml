@@ -1,0 +1,40 @@
+name: CI
+
+permissions: {}
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Foundry Test Suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run Forge formatting check
+        run: forge fmt --check
+
+      - name: Build contracts & print binary sizes
+        run: forge build --sizes
+
+      - name: Run unit & fuzz tests
+        run: forge test --no-match-path "test/invariant/**" -vvv
+
+      - name: Run stateful invariant test suite
+        run: forge test --match-path "test/invariant/**" -vvv

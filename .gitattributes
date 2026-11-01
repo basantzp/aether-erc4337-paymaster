@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.sol diff=solidity
+
+# GitHub Linguist Overrides - 100% Solidity Primary Language Attribution
+test/* linguist-documentation
+script/* linguist-documentation
+docs/* linguist-documentation
+*.json linguist-documentation
+*.toml linguist-documentation
+*.md linguist-documentation
+*.yml linguist-documentation
+*.yaml linguist-documentation

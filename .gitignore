@@ -1,0 +1,17 @@
+# Compiler outputs
+out/
+cache/
+
+# Foundry artifacts
+broadcast/
+
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
