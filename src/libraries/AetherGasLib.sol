@@ -23,7 +23,8 @@ library AetherGasLib {
         if (oracle == address(0)) revert IAetherPaymaster.InvalidAddress();
 
         // forge-lint: disable-next-line(unused-return)
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = AggregatorV3Interface(oracle).latestRoundData();
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
+            AggregatorV3Interface(oracle).latestRoundData();
 
         if (answer <= 0) revert IAetherPaymaster.InvalidOraclePrice(answer);
         // forge-lint: disable-next-line(block-timestamp)
