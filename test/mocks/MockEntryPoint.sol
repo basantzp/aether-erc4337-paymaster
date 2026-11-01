@@ -136,8 +136,10 @@ contract MockEntryPoint is IEntryPoint {
         if (paymasterAddr != address(0)) {
             uint256 valData;
             (context, valData) = IPaymaster(paymasterAddr).validatePaymasterUserOp(userOp, opHash, maxCost);
-            address authorizer = address(uint160(valData));
+            (address authorizer, uint48 validAfter, uint48 validUntil,) = ERC4337Utils.parseValidationData(valData);
             require(authorizer == address(0), "MockEntryPoint: paymaster validation failed");
+            require(block.timestamp >= validAfter, "MockEntryPoint: paymaster not valid yet");
+            require(validUntil == 0 || block.timestamp <= validUntil, "MockEntryPoint: paymaster expired");
         }
 
         // Account validation
@@ -159,7 +161,12 @@ contract MockEntryPoint is IEntryPoint {
             require(deposits[paymasterAddr].deposit >= actualCost, "MockEntryPoint: paymaster out of deposit");
             deposits[paymasterAddr].deposit -= uint112(actualCost);
 
-            IPaymaster(paymasterAddr).postOp(postOpMode, context, actualCost, simulatedFeePerGas);
+            try IPaymaster(paymasterAddr).postOp(postOpMode, context, actualCost, simulatedFeePerGas) {}
+            catch {
+                // Canonical ERC-4337 second-chance callback with postOpReverted mode
+                IPaymaster(paymasterAddr)
+                    .postOp(IPaymaster.PostOpMode.postOpReverted, context, actualCost, simulatedFeePerGas);
+            }
         }
 
         if (beneficiary != address(0) && actualCost > 0) {

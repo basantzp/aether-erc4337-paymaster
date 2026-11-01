@@ -109,10 +109,7 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
         (uint48 validUntil, uint48 validAfter, bytes32 sponsorId, bytes memory signature) =
             abi.decode(data, (uint48, uint48, bytes32, bytes));
 
-        if (validUntil != 0 && block.timestamp > validUntil) {
-            return (bytes(""), AetherGasLib.SIG_VALIDATION_FAILED);
-        }
-        if (block.timestamp < validAfter) {
+        if (validUntil != 0 && validUntil < validAfter) {
             return (bytes(""), AetherGasLib.SIG_VALIDATION_FAILED);
         }
         if (signature.length != 65) {
@@ -163,10 +160,7 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
         (address token, uint256 maxAllowedTokenCost, uint48 validUntil, uint48 validAfter) =
             abi.decode(data, (address, uint256, uint48, uint48));
 
-        if (validUntil != 0 && block.timestamp > validUntil) {
-            return (bytes(""), AetherGasLib.SIG_VALIDATION_FAILED);
-        }
-        if (block.timestamp < validAfter) {
+        if (validUntil != 0 && validUntil < validAfter) {
             return (bytes(""), AetherGasLib.SIG_VALIDATION_FAILED);
         }
 
@@ -175,7 +169,7 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
             return (bytes(""), AetherGasLib.SIG_VALIDATION_FAILED);
         }
 
-        (uint256 prefundTokenAmount, uint256 effectivePrice) = AetherGasLib.computeTokenCost(config, maxCost);
+        (uint256 prefundTokenAmount,) = AetherGasLib.computeTokenCost(config, maxCost);
 
         // Guard against extreme slippage exceeding user's maximum allowance
         if (maxAllowedTokenCost != 0 && prefundTokenAmount > maxAllowedTokenCost) {
@@ -191,22 +185,17 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
         }
 
         // Pre-charge maximum token cost upfront
+        // forge-lint: disable-next-line(arbitrary-send-erc20)
         IERC20(token).safeTransferFrom(userOp.sender, address(this), prefundTokenAmount);
 
-        context = abi.encode(PaymasterMode.ERC20, userOp.sender, bytes32(0), token, prefundTokenAmount, effectivePrice);
+        context = abi.encode(PaymasterMode.ERC20, userOp.sender, bytes32(0), token, prefundTokenAmount, maxCost);
 
         validationData = AetherGasLib.packValidationData(true, validAfter, validUntil);
     }
 
     /// @notice Post-operation callback invoked by EntryPoint to reconcile actual gas costs
     /// @dev Called by EntryPoint after inner execution
-    function postOp(
-        PostOpMode,
-        /* mode */
-        bytes calldata context,
-        uint256 actualGasCost,
-        uint256 actualUserOpFeePerGas
-    )
+    function postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 actualUserOpFeePerGas)
         external
         override
         nonReentrant
@@ -220,24 +209,21 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
             bytes32 sponsorId,
             address token,
             uint256 prefundTokenAmount,
-            /* uint256 effectivePrice */
+            uint256 maxCost
         ) = abi.decode(context, (PaymasterMode, address, bytes32, address, uint256, uint256));
 
         if (opMode == PaymasterMode.SPONSORED) {
             emit GasSponsored(sender, sponsorId, actualGasCost, actualUserOpFeePerGas);
         } else if (opMode == PaymasterMode.ERC20) {
-            TokenConfig memory config = _tokenConfigs[token];
-            uint256 actualTokenCost;
-
-            if (config.isSupported) {
-                (actualTokenCost,) = AetherGasLib.computeTokenCost(config, actualGasCost);
-            } else {
-                actualTokenCost = prefundTokenAmount;
+            // If postOp previously reverted, EntryPoint calls postOp with mode == postOpReverted.
+            // As per ERC-4337, postOp MUST NOT revert on postOpReverted to avoid bricking the entire bundle.
+            if (mode == PostOpMode.postOpReverted) {
+                return;
             }
 
-            if (actualTokenCost > prefundTokenAmount) {
-                actualTokenCost = prefundTokenAmount;
-            }
+            uint256 actualTokenCost = (maxCost > 0 && actualGasCost < maxCost)
+                ? (prefundTokenAmount * actualGasCost) / maxCost
+                : prefundTokenAmount;
 
             uint256 refundAmount = prefundTokenAmount - actualTokenCost;
 
@@ -275,6 +261,9 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
     ) external override onlyOwner {
         if (token == address(0) || oracle == address(0)) revert InvalidAddress();
         if (markupBps > 5_000) revert InvalidMarkup(markupBps); // Max 50% markup safeguard
+        if (tokenDecimals == 0 || tokenDecimals > 18) revert InvalidDecimals(tokenDecimals);
+        if (oracleDecimals == 0 || oracleDecimals > 18) revert InvalidDecimals(oracleDecimals);
+        if (maxOracleAge == 0) revert InvalidMaxOracleAge();
 
         _tokenConfigs[token] = TokenConfig({
             isSupported: true,
@@ -340,8 +329,11 @@ contract AetherPaymaster is IAetherPaymaster, Ownable2Step, Pausable, Reentrancy
     /// @notice Withdraws unlocked stake from EntryPoint
     function withdrawStake(address payable to) external override nonReentrant onlyOwner {
         if (to == address(0)) revert InvalidAddress();
-        emit StakeWithdrawn(to, address(this).balance);
+        uint256 balanceBefore = to.balance;
         entryPoint.withdrawStake(to);
+        uint256 amountWithdrawn = to.balance - balanceBefore;
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit StakeWithdrawn(to, amountWithdrawn);
     }
 
     /// @notice Withdraws accumulated ERC-20 gas fee revenue to treasury

@@ -40,6 +40,8 @@ interface IAetherPaymaster is IPaymaster {
     error InsufficientTokenAllowance(address token, address user, uint256 allowance, uint256 required);
     error InvalidAddress();
     error InvalidMarkup(uint16 markupBps);
+    error InvalidDecimals(uint8 decimals);
+    error InvalidMaxOracleAge();
     error ZeroDeposit();
     error WithdrawFailed();
     error InvalidPaymasterMode(uint8 mode);

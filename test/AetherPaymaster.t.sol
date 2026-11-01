@@ -164,6 +164,30 @@ contract AetherPaymasterTest is Test {
         paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 6, 8, 3600, 5001, true);
     }
 
+    function test_SetTokenConfig_RevertInvalidDecimals() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAetherPaymaster.InvalidDecimals.selector, 0));
+        paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 0, 8, 3600, 500, true);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAetherPaymaster.InvalidDecimals.selector, 19));
+        paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 19, 8, 3600, 500, true);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAetherPaymaster.InvalidDecimals.selector, 0));
+        paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 6, 0, 3600, 500, true);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IAetherPaymaster.InvalidDecimals.selector, 20));
+        paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 6, 20, 3600, 500, true);
+    }
+
+    function test_SetTokenConfig_RevertInvalidMaxOracleAge() public {
+        vm.prank(owner);
+        vm.expectRevert(IAetherPaymaster.InvalidMaxOracleAge.selector);
+        paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 6, 8, 0, 500, true);
+    }
+
     function test_RemoveToken_Success() public {
         vm.prank(owner);
         paymaster.setTokenConfig(address(usdc), address(ethUsdOracle), 6, 8, 3600, 500, true);
@@ -235,6 +259,8 @@ contract AetherPaymasterTest is Test {
         vm.warp(block.timestamp + 1 days + 1);
 
         uint256 treasuryBefore = treasury.balance;
+        vm.expectEmit(true, false, false, true);
+        emit IAetherPaymaster.StakeWithdrawn(treasury, 2 ether);
         vm.prank(owner);
         paymaster.withdrawStake(payable(treasury));
 

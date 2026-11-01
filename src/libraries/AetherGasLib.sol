@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {AggregatorV3Interface} from "../interfaces/AggregatorV3Interface.sol";
 import {IAetherPaymaster} from "../interfaces/IAetherPaymaster.sol";
+import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/ERC4337Utils.sol";
 
 /// @title AetherGasLib
 /// @notice Mathematical and cryptographic helper library for ERC-4337 gas and oracle accounting
@@ -21,13 +22,15 @@ library AetherGasLib {
     function getValidatedPrice(address oracle, uint32 maxOracleAge) internal view returns (uint256 price) {
         if (oracle == address(0)) revert IAetherPaymaster.InvalidAddress();
 
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            AggregatorV3Interface(oracle).latestRoundData();
+        // forge-lint: disable-next-line(unused-return)
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = AggregatorV3Interface(oracle).latestRoundData();
 
         if (answer <= 0) revert IAetherPaymaster.InvalidOraclePrice(answer);
+        // forge-lint: disable-next-line(block-timestamp)
         if (updatedAt == 0 || updatedAt > block.timestamp) {
             revert IAetherPaymaster.InvalidOracleTimestamp(updatedAt);
         }
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp - updatedAt > maxOracleAge) {
             revert IAetherPaymaster.StaleOraclePrice(block.timestamp, updatedAt, maxOracleAge);
         }
@@ -67,19 +70,25 @@ library AetherGasLib {
                 tokenAmount = (nativeGasCost * price * markupMultiplier) / (WEI_PER_ETH * scale * BPS_DENOMINATOR);
             }
         } else {
-            // Oracle price is in ETH per 1 Token (e.g. Token/ETH)
-            uint256 scale = 10 ** config.tokenDecimals;
-            // (nativeGasCost * scale * markupMultiplier) / (price * BPS_DENOMINATOR)
-            tokenAmount = (nativeGasCost * scale * markupMultiplier) / (price * BPS_DENOMINATOR);
+            // Oracle price is in ETH per 1 Token (e.g. Token/ETH: 1 Token = price * 10^-oracleDecimals ETH)
+            uint256 totalDecimals = uint256(config.oracleDecimals) + uint256(config.tokenDecimals);
+            if (totalDecimals >= 18) {
+                uint256 scale = 10 ** (totalDecimals - 18);
+                // (nativeGasCost * scale * markupMultiplier) / (price * BPS_DENOMINATOR)
+                tokenAmount = (nativeGasCost * scale * markupMultiplier) / (price * BPS_DENOMINATOR);
+            } else {
+                uint256 scale = 10 ** (18 - totalDecimals);
+                // (nativeGasCost * markupMultiplier) / (price * scale * BPS_DENOMINATOR)
+                tokenAmount = (nativeGasCost * markupMultiplier) / (price * scale * BPS_DENOMINATOR);
+            }
         }
     }
 
-    /// @notice Packs authorizer, validUntil, and validAfter into uint256 validationData
+    /// @notice Packs authorizer, validUntil, and validAfter into canonical uint256 validationData
     /// @param success Whether signature or op validation succeeded
     /// @param validAfter Earliest timestamp the op is valid
     /// @param validUntil Latest timestamp the op is valid (0 = infinite)
     function packValidationData(bool success, uint48 validAfter, uint48 validUntil) internal pure returns (uint256) {
-        address authorizer = success ? address(0) : address(1);
-        return uint256(uint160(authorizer)) | (uint256(validAfter) << 160) | (uint256(validUntil) << (160 + 48));
+        return ERC4337Utils.packValidationData(success, validAfter, validUntil);
     }
 }

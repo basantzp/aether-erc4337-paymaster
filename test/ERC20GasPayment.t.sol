@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console2} from "forge-std/Test.sol";
 import {AetherPaymaster} from "../src/AetherPaymaster.sol";
 import {IAetherPaymaster} from "../src/interfaces/IAetherPaymaster.sol";
-import {PackedUserOperation} from "@openzeppelin/contracts/interfaces/IERC4337.sol";
+import {IPaymaster, PackedUserOperation} from "@openzeppelin/contracts/interfaces/IERC4337.sol";
 import {MockEntryPoint} from "./mocks/MockEntryPoint.sol";
 import {MockAccount} from "./mocks/MockAccount.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -357,5 +357,77 @@ contract ERC20GasPaymentTest is Test {
 
         vm.expectRevert("MockEntryPoint: paymaster validation failed");
         entryPoint.handleOps(ops, beneficiary);
+    }
+
+    // --- Token/ETH (isPriceTokenPerEth == false) Settlement & Decimals ---
+
+    function test_Math_CalculateTokenCost_TokenPerEth_LINK() public {
+        // LINK has 18 decimals, oracle LINK/ETH has 18 decimals
+        MockERC20 link = new MockERC20("Chainlink", "LINK", 18);
+        MockAggregatorV3 linkEthOracle = new MockAggregatorV3(18, "LINK / ETH", 0.005 ether);
+
+        vm.prank(owner);
+        paymaster.setTokenConfig(address(link), address(linkEthOracle), 18, 18, 3600, 500, false); // +5%
+
+        // Gas: 0.01 ETH. 1 LINK = 0.005 ETH -> 2 LINK base. +5% = 2.1 LINK
+        (uint256 tokenAmount, uint256 price) = paymaster.calculateTokenCost(address(link), 0.01 ether);
+        assertEq(price, 0.005 ether);
+        assertEq(tokenAmount, 2.1 ether);
+    }
+
+    function test_Math_CalculateTokenCost_TokenPerEth_WBTC() public {
+        // WBTC has 8 decimals, oracle WBTC/ETH has 8 decimals (totalDecimals 16 < 18)
+        MockERC20 wbtc = new MockERC20("Wrapped BTC", "WBTC", 8);
+        MockAggregatorV3 wbtcEthOracle = new MockAggregatorV3(8, "WBTC / ETH", 30e8); // 1 WBTC = 30 ETH
+
+        vm.prank(owner);
+        paymaster.setTokenConfig(address(wbtc), address(wbtcEthOracle), 8, 8, 3600, 0, false); // 0% markup
+
+        // Gas: 3 ETH. 1 WBTC = 30 ETH -> 0.1 WBTC = 10_000_000 units
+        (uint256 tokenAmount, uint256 price) = paymaster.calculateTokenCost(address(wbtc), 3 ether);
+        assertEq(price, 30e8);
+        assertEq(tokenAmount, 10_000_000); // exactly 0.1 WBTC in 8 decimals
+    }
+
+    function test_ERC20GasPayment_LINK_TokenPerEth_SuccessWithRefund() public {
+        MockERC20 link = new MockERC20("Chainlink", "LINK", 18);
+        MockAggregatorV3 linkEthOracle = new MockAggregatorV3(18, "LINK / ETH", 0.005 ether);
+
+        vm.prank(owner);
+        paymaster.setTokenConfig(address(link), address(linkEthOracle), 18, 18, 3600, 500, false);
+
+        link.mint(address(account), 100 ether);
+        vm.prank(address(account));
+        link.approve(address(paymaster), type(uint256).max);
+
+        // Simulated gas: 50,000 gas @ 20 gwei = 0.001 ETH
+        // Actual cost = 0.001 / 0.005 * 1.05 = 0.21 LINK
+        PackedUserOperation memory userOp =
+            _buildERC20UserOp(0, address(link), 10 ether, uint48(block.timestamp + 1 hours), 0);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+
+        uint256 accountBalBefore = link.balanceOf(address(account));
+        entryPoint.handleOps(ops, beneficiary);
+
+        assertEq(link.balanceOf(address(account)), accountBalBefore - 0.21 ether);
+        assertEq(paymaster.totalGasCollected(address(link)), 0.21 ether);
+    }
+
+    function test_ERC20GasPayment_PostOpReverted_SafeHandled() public {
+        // Verify postOp with postOpReverted mode returns without reverting
+        bytes memory context = abi.encode(
+            IAetherPaymaster.PaymasterMode.ERC20,
+            address(account),
+            bytes32(0),
+            address(usdc),
+            uint256(10e6),
+            uint256(0.003 ether)
+        );
+
+        vm.prank(address(entryPoint));
+        // Should execute smoothly without reverting
+        paymaster.postOp(IPaymaster.PostOpMode.postOpReverted, context, 0.001 ether, 20 gwei);
     }
 }

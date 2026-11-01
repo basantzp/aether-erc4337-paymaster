@@ -160,14 +160,22 @@ if (answeredInRound < roundId) revert IncompleteOracleRound(...);
      $$\text{TokenAmount} = \frac{\text{GasCostWei} \times \text{Price} \times 10^{\text{tokenDecimals} - \text{oracleDecimals}} \times (10000 + \text{markupBps})}{10^{18} \times 10000}$$
    - For `tokenDecimals < oracleDecimals`:
      $$\text{TokenAmount} = \frac{\text{GasCostWei} \times \text{Price} \times (10000 + \text{markupBps})}{10^{18} \times 10^{\text{oracleDecimals} - \text{tokenDecimals}} \times 10000}$$
-2. All operations order multiplications before divisions to prevent precision truncation.
+2. **When `isPriceTokenPerEth == false` (e.g. LINK/ETH, WBTC/ETH: Price in ETH per 1 Token)**:
+   - For $\text{totalDecimals} = \text{oracleDecimals} + \text{tokenDecimals} \ge 18$:
+     $$\text{TokenAmount} = \frac{\text{GasCostWei} \times 10^{\text{totalDecimals} - 18} \times (10000 + \text{markupBps})}{\text{Price} \times 10000}$$
+   - For $\text{totalDecimals} < 18$:
+     $$\text{TokenAmount} = \frac{\text{GasCostWei} \times (10000 + \text{markupBps})}{\text{Price} \times 10^{18 - \text{totalDecimals}} \times 10000}$$
+3. All operations order multiplications before divisions to preserve absolute integer precision.
 
-#### Token Pre-Charge and Instant Refund Flow
+#### Token Pre-Charge and Instant Safe Refund Flow
 - During `validatePaymasterUserOp`:
   $$\text{PrefundAmount} = \text{computeTokenCost}(\text{maxCost})$$
   $$\text{IERC20}(\text{token}).\text{safeTransferFrom}(\text{sender}, \text{paymaster}, \text{PrefundAmount})$$
+  Locks `maxCost` and `prefundTokenAmount` into `context`.
 - During `postOp`:
-  $$\text{ActualTokenCost} = \text{computeTokenCost}(\text{actualGasCost})$$
+  - Protects against double-revert if `mode == PostOpMode.postOpReverted`.
+  - Reconciles cost deterministically without redundant or fragile secondary oracle calls:
+  $$\text{ActualTokenCost} = \frac{\text{PrefundAmount} \times \text{ActualGasCost}}{\text{MaxCost}}$$
   $$\text{RefundAmount} = \text{PrefundAmount} - \text{ActualTokenCost}$$
   $$\text{IERC20}(\text{token}).\text{safeTransfer}(\text{sender}, \text{RefundAmount})$$
 
@@ -181,7 +189,11 @@ if (answeredInRound < roundId) revert IncompleteOracleRound(...);
    `nonReentrant` protects `postOp` and all withdrawal methods (`withdrawDeposit`, `withdrawStake`, `withdrawToken`, `withdrawNative`).
 3. **Emergency Circuit Breaker (`Pausable`)**:
    `pause()` halts validation of user operations immediately, causing `validatePaymasterUserOp` to return `SIG_VALIDATION_FAILED`.
-4. **Checks-Effects-Interactions (CEI)**:
+4. **Input Sanitization & Decimals Validation**:
+   Enforces `1 <= tokenDecimals <= 18`, `1 <= oracleDecimals <= 18`, and `maxOracleAge > 0` on all registered token feeds.
+5. **Checks-Effects-Interactions (CEI)**:
    All events and internal state accounting occur prior to external token transfers or call dispatches.
-5. **Markup Limit Protection**:
+6. **Markup Limit Protection**:
    Markup cannot exceed 5,000 bps (50%), preventing accidental or malicious over-charging.
+7. **Canonical ValidationData Packing**:
+   Uses OpenZeppelin's audited `ERC4337Utils.packValidationData` ensuring `(validAfter, validUntil, authorizer)` bit layout conforms to canonical ERC-4337 specifications.

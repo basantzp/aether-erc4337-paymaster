@@ -172,7 +172,7 @@ contract SponsoredGasTest is Test {
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = userOp;
 
-        vm.expectRevert("MockEntryPoint: paymaster validation failed");
+        vm.expectRevert("MockEntryPoint: paymaster expired");
         entryPoint.handleOps(ops, beneficiary);
     }
 
@@ -180,6 +180,20 @@ contract SponsoredGasTest is Test {
         bytes memory callData = abi.encodeWithSelector(MockAccount.execute.selector, address(0xbeef), 0, "");
         uint48 validUntil = uint48(block.timestamp + 2 hours);
         uint48 validAfter = uint48(block.timestamp + 1 hours); // In future
+
+        PackedUserOperation memory userOp = _buildUserOp(0, callData, validUntil, validAfter, sponsorId, signerKey);
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+
+        vm.expectRevert("MockEntryPoint: paymaster not valid yet");
+        entryPoint.handleOps(ops, beneficiary);
+    }
+
+    function test_SponsoredGas_RevertInvertedTimeRange() public {
+        bytes memory callData = abi.encodeWithSelector(MockAccount.execute.selector, address(0xbeef), 0, "");
+        uint48 validUntil = uint48(block.timestamp + 1 hours);
+        uint48 validAfter = uint48(block.timestamp + 2 hours); // validAfter > validUntil
 
         PackedUserOperation memory userOp = _buildUserOp(0, callData, validUntil, validAfter, sponsorId, signerKey);
 

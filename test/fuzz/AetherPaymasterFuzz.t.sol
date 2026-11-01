@@ -8,6 +8,7 @@ import {AetherGasLib} from "../../src/libraries/AetherGasLib.sol";
 import {MockEntryPoint} from "../mocks/MockEntryPoint.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockAggregatorV3} from "../mocks/MockAggregatorV3.sol";
+import {ERC4337Utils} from "@openzeppelin/contracts/account/utils/ERC4337Utils.sol";
 
 contract AetherPaymasterFuzzTest is Test {
     AetherPaymaster public paymaster;
@@ -52,6 +53,29 @@ contract AetherPaymasterFuzzTest is Test {
         assertGe(doubleCost, tokenCost * 2 - 1, "Monotonic scaling violated");
     }
 
+    /// @notice Invariant: Token/ETH pricing (isPriceTokenPerEth == false) preserves monotonicity and scales accurately
+    function testFuzz_CalculateTokenCost_TokenPerEthInverted(uint256 gasCostWei, int256 tokenPriceEth, uint16 markupBps)
+        public
+    {
+        gasCostWei = bound(gasCostWei, 21_000 * 1 gwei, 50 ether);
+        tokenPriceEth = bound(tokenPriceEth, 0.0001e18, 50e18); // 0.0001 ETH to 50 ETH per token
+        markupBps = uint16(bound(markupBps, 0, 5000));
+
+        MockERC20 link = new MockERC20("Chainlink", "LINK", 18);
+        MockAggregatorV3 linkEthFeed = new MockAggregatorV3(18, "LINK / ETH", tokenPriceEth);
+
+        vm.prank(owner);
+        paymaster.setTokenConfig(address(link), address(linkEthFeed), 18, 18, 3600, markupBps, false);
+
+        (uint256 tokenCost, uint256 fetchedPrice) = paymaster.calculateTokenCost(address(link), gasCostWei);
+
+        assertGt(tokenCost, 0, "Token cost must be positive");
+        assertEq(fetchedPrice, uint256(tokenPriceEth));
+
+        (uint256 doubleCost,) = paymaster.calculateTokenCost(address(link), gasCostWei * 2);
+        assertGe(doubleCost, tokenCost * 2 - 1, "Monotonic scaling violated");
+    }
+
     /// @notice Invariant: Pre-fund always equals exactly actualTokenCost + refundAmount
     function testFuzz_RefundConservation(uint256 simulatedActualGas, uint256 gasPriceGwei) public view {
         simulatedActualGas = bound(simulatedActualGas, 21_000, 150_000);
@@ -70,7 +94,7 @@ contract AetherPaymasterFuzzTest is Test {
         assertEq(actualTokens + refundTokens, prefundTokens, "Token conservation violated");
     }
 
-    /// @notice Invariant: Timestamp validity packing correctly identifies valid vs invalid ranges
+    /// @notice Invariant: Timestamp validity packing correctly identifies valid vs invalid ranges and unpacks identically
     function testFuzz_TimestampValidationData(uint48 validAfter, uint48 validUntil, uint48 currentTimestamp)
         public
         pure
@@ -82,12 +106,20 @@ contract AetherPaymasterFuzzTest is Test {
         bool isTimestampValid = (currentTimestamp >= validAfter) && (validUntil == 0 || currentTimestamp <= validUntil);
 
         uint256 valData = AetherGasLib.packValidationData(isTimestampValid, validAfter, validUntil);
-        address authorizer = address(uint160(valData));
+        (address authorizer, uint48 parsedValidAfter, uint48 parsedValidUntil,) =
+            ERC4337Utils.parseValidationData(valData);
 
         if (isTimestampValid) {
             assertEq(authorizer, address(0), "Valid op must return authorizer 0");
         } else {
             assertEq(authorizer, address(1), "Invalid op must return authorizer 1");
+        }
+
+        assertEq(parsedValidAfter, validAfter, "validAfter must match canonical unpacking");
+        if (validUntil == 0) {
+            assertEq(parsedValidUntil, 0x7fffffffffff, "infinite validUntil must unpack as block mask");
+        } else {
+            assertEq(parsedValidUntil, validUntil, "validUntil must match canonical unpacking");
         }
     }
 
