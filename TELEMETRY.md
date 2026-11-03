@@ -2,7 +2,7 @@
 
 > **Repository**: [`basantzp/aether-erc4337-paymaster`](https://github.com/basantzp/aether-erc4337-paymaster)  
 > **Stack**: Solidity 0.8.28 + ERC-4337 v0.7 + EIP-712 + Chainlink  
-> **Last Verification Run**: `2026-11-03 16:24:28 +0545`  
+> **Last Verification Run**: `2026-11-03 23:48:03 +0545`  
 > **Verification Status**: 🟢 **57/57 Tests & 128k Invariants Proven**  
 > **Author**: `basantzp <basantpok90@gmail.com>`
 
@@ -15,6 +15,6 @@
 
 ### Verification Summary
 ```text
-Suite result: ok. 25 passed; 0 failed; 0 skipped; finished in 1.79ms (2.59ms CPU time)
-Ran 1 test suite in 8.95ms (1.79ms CPU time): 25 tests passed, 0 failed, 0 skipped (25 total tests)
+Suite result: ok. 25 passed; 0 failed; 0 skipped; finished in 5.34ms (6.34ms CPU time)
+Ran 1 test suite in 21.85ms (5.34ms CPU time): 25 tests passed, 0 failed, 0 skipped (25 total tests)
 ```
